@@ -1,0 +1,70 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+*.so
+
+# uv / virtualenv
+.venv/
+venv/
+env/
+.env
+.env.*
+*.egg-info/
+dist/
+build/
+.uv/
+uv.lock
+
+# Jupyter notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Testing & linting caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Log / error / output files
+*.log
+*.err
+*.out
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# local agent/tool state
+.claude/
+
+# NFS keeps a deleted-but-open file as .nfsXXXX until the holder exits
+.nfs*
+
+# ---------------------------------------------------------------------------
+# local-only trees
+# ---------------------------------------------------------------------------
+# design notes, discarded-axis history, probe seeds and one-off patch sets:
+# written for me, not for the repo
+/_local/
+
+# ---------------------------------------------------------------------------
+# outputs — local model run artefacts
+# ---------------------------------------------------------------------------
+# raw model responses include generated unlawful ad copy and similar risk outputs,
+# so they stay local. symlink into /data1 (home ran out of space) → no trailing slash
+/outputs
+
+# national-law OPEN API response cache — regenerable with `eval/lawsync.py --fill`
+dataset/.lawcache/
+
+# compatibility symlinks kept only while an in-flight measurement uses the old paths.
+# anchored to the repo root so reports/*/results/ is still tracked
+/tools
+/bench
+/results

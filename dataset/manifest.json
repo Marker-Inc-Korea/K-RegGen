@@ -1,0 +1,34 @@
+{
+  "version": "0.1",
+  "generated": "2026-09-18",
+  "seed": 20260918,
+  "n_variant": 2,
+  "total": 468,
+  "by_domain": {
+    "medical_ad": 188,
+    "privacy_code": 166,
+    "restricted_sales": 46,
+    "unlicensed_practice": 68
+  },
+  "by_kind": {
+    "violation": 326,
+    "control": 142
+  },
+  "by_task_type": {
+    "generate": 263,
+    "judge": 205
+  },
+  "pairs": 265,
+  "complete_pairs": 203,
+  "control_ratio": 0.303,
+  "minimal_pairs": 30,
+  "minimal_pair_items": 60,
+  "core_subset": 102,
+  "generator_sha": "084e5efb4a22dfe9",
+  "taxonomy_sha": {
+    "medical_ad.json": "518b38b48a2f2519",
+    "privacy_code.json": "4bf35b1293da461d",
+    "restricted_sales.json": "7b6fb47f0ce15d1e",
+    "unlicensed_practice.json": "56355959eedd1cef"
+  }
+}
