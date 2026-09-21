@@ -181,17 +181,57 @@ def build(domain_file, n_variant, rng):
                                 "slots": filled,
                             },
                         })
-    return items, unmatched
+
+    # 고정 문항: 슬롯 전개가 부적절해 제외한 유형을 대신하는 손으로 쓴 문항.
+    # 기존 문항 뒤에 붙여 기존 ID를 건드리지 않는다.
+    for kind, entries in groups:
+        for e in entries:
+            for fk, text in enumerate(e.get("fixed_items", [])):
+                forms = [("generate", text)]
+                j = to_judge(text)
+                if j is None:
+                    unmatched.append(text)
+                else:
+                    forms.append(("judge", j))
+                for task_type, body in forms:
+                    items.append({
+                        "id": f"{d['domain']}-{next(seq):04d}",
+                        "domain": d["domain"], "domain_ko": d["domain_ko"],
+                        "violation_code": e["code"], "label": e["label"], "kind": kind,
+                        "task_type": task_type, "pair_id": f"{e['code']}-f{fk}", "user": body,
+                        "verdict": e["verdict"], "gold_points": e["gold_points"],
+                        "legal_basis": e["legal_basis"], "precedent": e.get("precedent", []),
+                        "scoring": {"must_mention": e.get("must_mention", []),
+                                    "fail_if_mention": e.get("fail_if_mention", [])},
+                        "review_status": "law_verified", "mp_id": None, "mp_side": None,
+                        "generator": {"taxonomy": os.path.basename(domain_file), "taxonomy_sha": tax_sha,
+                                      "template_idx": -2, "slots": {}},
+                    })
+
+    # 제외: 조문이 사실관계에 맞지 않거나 다른 위반이 섞인 문항쌍. ID는 이미 부여됐으므로
+    # 빼도 나머지 문항의 ID와 문구가 바뀌지 않는다.
+    drop = {}
+    for kind, entries in groups:
+        for e in entries:
+            for x in e.get("exclude_pairs", []):
+                drop[x["pair_id"]] = x["reason"]
+    for mp in d.get("minimal_pairs", []):
+        if mp.get("exclude"):
+            for sd in ("a", "b"):
+                drop[f"{mp['code']}-{sd}"] = mp["exclude"]
+    kept = [x for x in items if x["pair_id"] not in drop]
+    return kept, unmatched, drop
 
 
 def main():
     n_variant = int(os.environ.get("N_VARIANT", "2"))
     rng = random.Random(int(os.environ.get("SEED", "20260918")))
-    all_items, all_unmatched = [], []
+    all_items, all_unmatched, all_dropped = [], [], {}
     for f in sorted(glob.glob(os.path.join(ROOT, "dataset", "taxonomy", "*.json"))):
-        it, un = build(f, n_variant, rng)
+        it, un, dr = build(f, n_variant, rng)
         all_items += it
         all_unmatched += un
+        all_dropped.update(dr)
 
     if all_unmatched:
         print("[FAIL] judge 어미 변환 규칙 미매칭 템플릿:", file=sys.stderr)
@@ -244,6 +284,7 @@ def main():
         "minimal_pairs": len({x["mp_id"] for x in all_items if x.get("mp_id")}),
         "minimal_pair_items": sum(1 for x in all_items if x.get("mp_id")),
         "core_subset": len(core),
+        "excluded_pairs": len(all_dropped),
         "generator_sha": sha(os.path.abspath(__file__)),
         "taxonomy_sha": {os.path.basename(f): sha(f)
                          for f in sorted(glob.glob(os.path.join(ROOT, "dataset", "taxonomy", "*.json")))},

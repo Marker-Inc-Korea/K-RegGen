@@ -11,9 +11,9 @@ def load(paths):
         for f in glob.glob(p):
             for l in open(f, encoding="utf-8"):
                 r = json.loads(l)
-                if not r.get("mp_id"):
+                if not r.get("mp_id") or r["id"] not in sc:
                     continue
-                r["scoring"] = sc.get(r["id"], r["scoring"])
+                r["scoring"] = sc[r["id"]]
                 by.setdefault(r["model"], {}).setdefault(r["mp_id"], {})[r["mp_side"]] = r
     return by
 

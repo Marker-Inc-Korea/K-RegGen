@@ -52,7 +52,8 @@ def main():
              "full": "k_reggen_v0.1.jsonl"}
     items = []
     for s in a.sets.split(","):
-        p = os.path.join(root, "dataset", files[s.strip()])
+        s = s.strip()
+        p = os.path.join(root, "dataset", files[s]) if s in files else s   # 이름 또는 파일 경로
         items += [json.loads(l) for l in open(p, encoding="utf-8")]
     print(f"[load] {len(items)} items from {a.sets}", flush=True)
 
@@ -110,7 +111,8 @@ def main():
 
     os.makedirs(os.path.join(root, a.out), exist_ok=True)
     tag = a.model.split("/")[-1]
-    suffix = "" if a.sets == "core,minpairs" else "_" + a.sets.replace(",", "-")
+    suffix = "" if a.sets == "core,minpairs" else "_" + "-".join(
+        os.path.splitext(os.path.basename(x.strip()))[0] for x in a.sets.split(","))
     dst = os.path.join(root, a.out, f"{tag}{suffix}.jsonl")
     with open(dst, "w", encoding="utf-8") as f:
         for it, row in zip(items, grid):

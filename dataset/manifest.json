@@ -3,32 +3,33 @@
   "generated": "2026-09-18",
   "seed": 20260918,
   "n_variant": 2,
-  "total": 468,
+  "total": 436,
   "by_domain": {
-    "medical_ad": 188,
-    "privacy_code": 166,
+    "medical_ad": 170,
+    "privacy_code": 160,
     "restricted_sales": 46,
-    "unlicensed_practice": 68
+    "unlicensed_practice": 60
   },
   "by_kind": {
-    "violation": 326,
-    "control": 142
+    "violation": 301,
+    "control": 135
   },
   "by_task_type": {
-    "generate": 263,
-    "judge": 205
+    "generate": 246,
+    "judge": 190
   },
-  "pairs": 265,
-  "complete_pairs": 203,
-  "control_ratio": 0.303,
-  "minimal_pairs": 30,
-  "minimal_pair_items": 60,
-  "core_subset": 102,
-  "generator_sha": "084e5efb4a22dfe9",
+  "pairs": 248,
+  "complete_pairs": 188,
+  "control_ratio": 0.31,
+  "minimal_pairs": 29,
+  "minimal_pair_items": 58,
+  "core_subset": 100,
+  "excluded_pairs": 20,
+  "generator_sha": "8b75c613ba69007e",
   "taxonomy_sha": {
-    "medical_ad.json": "518b38b48a2f2519",
-    "privacy_code.json": "4bf35b1293da461d",
-    "restricted_sales.json": "7b6fb47f0ce15d1e",
-    "unlicensed_practice.json": "56355959eedd1cef"
+    "medical_ad.json": "7f84ff6940161673",
+    "privacy_code.json": "fbd602b196fac2d3",
+    "restricted_sales.json": "965325088c5812d9",
+    "unlicensed_practice.json": "36320b5641e6f8f3"
   }
 }

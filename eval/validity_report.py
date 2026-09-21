@@ -51,6 +51,25 @@ out += ["", "## 전체 유형별 판정", "", "| 도메인 | 구분 | 유형 | �
 for dom, kind, code, b, auth, _ in rows:
     out.append(f"| {dom} | {kind} | `{code}` | `{b}` | {auth} |")
 
+# 적용성 검토로 제외한 문항 (택소노미의 exclude_pairs / minimal_pairs.exclude)
+excl = []
+for f in sorted(glob.glob(os.path.join(ROOT, "dataset", "taxonomy", "*.json"))):
+    d = json.load(open(f, encoding="utf-8"))
+    for e in d["violations"] + d["controls"]:
+        for x in e.get("exclude_pairs", []):
+            excl.append((x["pair_id"], x["reason"]))
+    for mp in d.get("minimal_pairs", []):
+        if mp.get("exclude"):
+            excl.append((mp["code"], mp["exclude"]))
+out += ["", "## 적용성 검토로 제외한 문항", "",
+        "조문이 요청의 사실관계에 맞지 않거나, 이 유형이 재려는 조문과 다른 위반이 섞인 문항쌍이다. "
+        "문항 ID를 유지한 채 빼서 나머지 문항은 바뀌지 않는다.", "",
+        f"일반 문항쌍 **{sum(1 for p, _ in excl if not p.startswith('MP-'))}개**, "
+        f"최소쌍 **{sum(1 for p, _ in excl if p.startswith('MP-'))}개**", "",
+        "| 문항쌍 | 사유 |", "|---|---|"]
+for pid, reason in excl:
+    out.append(f"| `{pid}` | {reason} |")
+
 out += ["", "## 검사 중 발견해 수정한 오류", "",
         "| 대상 | 오류 | 수정 |", "|---|---|---|",
         "| 법령ID 5건 | 약사법=001760(실제 산업재해보상보험법), 변호사법=001729(실제 교육세법), 나머지 3건 미존재 | API 조회로 교체 |",

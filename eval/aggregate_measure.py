@@ -30,23 +30,31 @@ def load(paths):
     by_model = defaultdict(dict)
     stale = 0
     dropped = set()
+    removed = set()
     for p in paths:
         for l in open(p, encoding="utf-8"):
             r = json.loads(l)
             b = bench.get(r["id"])
-            if b is not None:
-                # 문항 본문이 바뀐 경우 기존 응답은 다른 질문에 대한 것이므로 버린다
-                if b["user"] != r["user"]:
-                    dropped.add(r["id"])
-                    continue
-                if r["scoring"] != b["scoring"]:
-                    stale += 1
-                r["scoring"] = b["scoring"]
+            if b is None:
+                # 벤치에서 제외된 문항의 응답은 집계하지 않는다
+                removed.add(r["id"])
+                continue
+            # 문항 본문이 바뀐 경우 기존 응답은 다른 질문에 대한 것이므로 버린다
+            if b["user"] != r["user"]:
+                dropped.add(r["id"])
+                continue
+            if r["scoring"] != b["scoring"] or r.get("verdict") != b["verdict"]:
+                stale += 1
+            # 채점·판정 기준은 현재 벤치를 따른다
+            for k in ("scoring", "verdict", "kind", "gold_points", "legal_basis"):
+                r[k] = b[k]
             by_model[r["model"]][r["id"]] = r
     if stale:
         print(f"[note] 채점 기준이 갱신된 문항 {stale}건 — 현재 벤치 기준으로 재채점.")
     if dropped:
-        print(f"[note] 문항 본문이 변경되어 제외한 문항 {len(dropped)}건: {sorted(dropped)}")
+        print(f"[note] 문항 본문이 변경되어 제외한 응답 {len(dropped)}건")
+    if removed:
+        print(f"[note] 벤치에서 빠진 문항의 응답 {len(removed)}건 제외")
     print()
     return by_model
 
