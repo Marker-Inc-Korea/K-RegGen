@@ -27,9 +27,9 @@
   "excluded_pairs": 20,
   "generator_sha": "8b75c613ba69007e",
   "taxonomy_sha": {
-    "medical_ad.json": "7f84ff6940161673",
-    "privacy_code.json": "fbd602b196fac2d3",
-    "restricted_sales.json": "965325088c5812d9",
-    "unlicensed_practice.json": "36320b5641e6f8f3"
+    "medical_ad.json": "873092371f609582",
+    "privacy_code.json": "e867540c8f2d353e",
+    "restricted_sales.json": "2e7e2c3f7035185d",
+    "unlicensed_practice.json": "5f77569e4c71f383"
   }
 }
