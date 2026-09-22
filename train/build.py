@@ -24,7 +24,21 @@ from common import ROOT, guard_messages, guard_target, load_rules, parse_tags, r
 
 SPAN = re.compile(r"⟦(.+?)⟧", re.S)
 LABEL_HINT = re.compile(r"\s*\(라벨:\s*[^)]*\)")      # 교사가 지시문의 라벨 표기를 따라 쓴 경우
-ARTIFACT = re.compile(r"⟨/?[A-Za-z]+\s*/?>")
+ARTIFACT = re.compile(r"⟨/?[A-Za-z]*\s*/?[>⟩]?|⟩")
+# 교사 프롬프트 누설·다른 버전 언급·언어 전환 오류(한국어 단어에 바로 붙은 한자·가나·키릴)
+PROMPT_LEAK = re.compile(r"요청 방식\s*:|금지 요소 예시|시나리오 설정|정합성 주의|\(라벨|위반본|적법본|경고본|확인필요본|수락본|엉뚱경고본|경고후제공본|긴경고본")
+CODE_SWITCH = re.compile(r"[가-힣][\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff]|[\u4e00-\u9fff\u3040-\u30ff\u0400-\u04ff][가-힣]")
+TAG_LEAK = re.compile(r"</?(요청|위반본|적법본|경고본|확인필요본|수락본|엉뚱경고본|경고후제공본|긴경고본|응답|주의응답|긴주의응답)>")
+
+
+def bad_text(s):
+    """버려야 할 산출물 문제가 있으면 사유를, 없으면 None."""
+    body = re.sub(r"```.*?```", " ", s, flags=re.S)
+    if PROMPT_LEAK.search(s):
+        return "prompt_leak"
+    if CODE_SWITCH.search(body):
+        return "code_switch"
+    return None
 LAW_WORDS = re.compile(r"위반|불법|위법|제\s*\d+\s*조|의료법|개인정보\s*보호법|약사법|변호사법|세무사법|공인중개사법|의료기사")
 LAW_NAMES = re.compile(r"제\s*\d+\s*조|의료법|개인정보\s*보호법|약사법|변호사법|세무사법|공인중개사법|의료기사")  # 문의형은 '불법인가요?'를 허용
 WARN = re.compile(r"위법|불법|법(률)?\s*위반|금지(되|하고|되어)|처벌|과태료|벌금")
@@ -227,7 +241,19 @@ def expand(rows, rules):
                        "spans": sv, "response": vc.rstrip() + f"\n\n※ 참고: 일부 표현은 {art}에 저촉될 소지가 있으니 게시 전 확인하세요."})
         why["ok"] += 1
         out.extend(ex)
-    return out, why
+    kept = []
+    for e in out:
+        reason = ("tag_leak" if TAG_LEAK.search(e["request"]) else None) or bad_text(e["request"]) or bad_text(e["response"])
+        if reason:
+            why["drop_" + reason] += 1
+            continue
+        kept.append(e)
+    return kept, why
+
+
+def load_split_map(path):
+    """dedup.py가 만든 시나리오 -> {split, keep} 표. 없으면 None(무작위 시나리오 분할)."""
+    return json.load(open(os.path.join(ROOT, path), encoding="utf-8")) if path else None
 
 
 def ngrams(s, n=5):
@@ -276,6 +302,7 @@ def main():
     ap.add_argument("--dst", default="outputs/k_reggen_train")
     ap.add_argument("--thr", type=float, default=0.35, help="char 5-gram Jaccard vs benchmark requests")
     ap.add_argument("--holdout", default="", help="comma-separated rule IDs kept out of train/val")
+    ap.add_argument("--split-map", default="", help="train/dedup.py output: cluster-level split and caps")
     a = ap.parse_args()
     rules = load_rules()
 
@@ -313,7 +340,18 @@ def main():
         judged = {j.get("ex_id") or j["key"]: j
                   for f in sorted(glob.glob(os.path.join(ROOT, a.judged))) for j in read_jsonl(f)}
         parts, why = defaultdict(list), Counter()
+        smap = load_split_map(a.split_map)
         for c in cands:
+            if smap is not None:
+                m = smap.get(c["scenario"])
+                if not m or not m["keep"]:
+                    why["dedup_dropped"] += 1
+                    continue
+                c = {**c, "split": m["split"]}
+            reason = ("tag_leak" if TAG_LEAK.search(c["request"]) else None) or bad_text(c["response"])
+            if reason:
+                why["drop_" + reason] += 1
+                continue
             j = judged.get(c["ex_id"])
             if not j or not j["label"]:
                 why["unjudged"] += 1
@@ -401,6 +439,13 @@ def main():
     rng.shuffle(scen)
     n = len(scen)
     split_of = {s: ("test" if i < n * 0.08 else "val" if i < n * 0.12 else "train") for i, s in enumerate(scen)}
+    smap = load_split_map(a.split_map)
+    if smap is not None:
+        # 유사 요청 묶음 단위 분할: 묶음 밖으로 흩어지지 않게, 묶음당 남길 시나리오만 남긴다
+        before = len(keep)
+        keep = [c for c in keep if smap.get(c["scenario"], {}).get("keep")]
+        why["dedup_dropped"] = before - len(keep)
+        split_of = {c["scenario"]: smap[c["scenario"]]["split"] for c in keep}
     parts = defaultdict(list)
     for c in keep:
         sp = split_of[c["scenario"]]

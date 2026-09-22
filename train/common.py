@@ -110,6 +110,7 @@ def parse_guard(text):
 TAG_NAMES = ("요청", "위반본", "확인필요본", "적법본", "경고본", "응답", "주의응답",
              "수락본", "엉뚱경고본", "경고후제공본", "긴경고본", "긴주의응답")
 _TAG_OPEN = re.compile(r"<(" + "|".join(TAG_NAMES) + r")>")
+_TAG_ANY = re.compile(r"</?(" + "|".join(TAG_NAMES) + r")>")
 
 
 def parse_tags(text):
@@ -118,7 +119,8 @@ def parse_tags(text):
     pos = [(m.start(), m.end(), m.group(1)) for m in _TAG_OPEN.finditer(text or "")]
     for i, (_, e, t) in enumerate(pos):
         end = pos[i + 1][0] if i + 1 < len(pos) else len(text)
-        body = re.split(rf"</{t}>", text[e:end])[0].strip()
+        # 자기 닫는 태그뿐 아니라 다른 태그 경계에서도 자른다(여는 태그를 빠뜨린 출력이 요청에 섞이던 문제)
+        body = _TAG_ANY.split(text[e:end])[0].strip()
         if t not in out and body:
             out[t] = body
     return out
