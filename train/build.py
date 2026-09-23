@@ -21,6 +21,7 @@ from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import ROOT, guard_messages, guard_target, load_rules, parse_tags, read_jsonl, write_jsonl  # noqa: E402
+from fixes import problems as fix_problems, restore_span  # noqa: E402
 
 SPAN = re.compile(r"⟦(.+?)⟧", re.S)
 LABEL_HINT = re.compile(r"\s*\(라벨:\s*[^)]*\)")      # 교사가 지시문의 라벨 표기를 따라 쓴 경우
@@ -191,11 +192,16 @@ def expand(rows, rules):
                     {**base, "version": "warned", "label": "적법", "rules": [], "spans": [], "response": w}]
             why["ok"] += 1
             continue
-        need = ["위반본", "적법본", "경고본"] + (["확인필요본"] if r["has_cond"] else [])
+        # 조건형 규칙은 확인필요본이 기준본이다(예전 생성분에는 위반본도 있다).
+        need = ["적법본", "경고본"] + (["확인필요본"] if r["has_cond"] else ["위반본"])
         if any(not t.get(k) for k in need):
             why["missing_tag"] += 1
             continue
-        v, u = t["위반본"], t.get("확인필요본")
+        v, u = t.get("위반본"), t.get("확인필요본")
+        if v is None:
+            v, u, lab, ver = u, None, "확인필요", "unverified"
+        else:
+            lab, ver = "위반", "violating"
         # 적법본·경고본의 ⟦ ⟧는 '바꾼 자리' 표시일 뿐이라 지운다
         l, w = strip_marks(t["적법본"]), strip_marks(t["경고본"])
         vc, lc = strip_marks(v), l
@@ -221,7 +227,7 @@ def expand(rows, rules):
             why["warning_not_flagged"] += 1
             continue
         ex = [
-            {**base, "version": "violating", "label": "위반", "rules": [rid], "spans": sv, "response": vc},
+            {**base, "version": ver, "label": lab, "rules": [rid], "spans": sv, "response": vc},
             {**base, "version": "lawful", "label": "적법", "rules": [], "spans": [], "response": lc},
             {**base, "version": "warned", "label": "적법", "rules": [], "spans": [], "response": w},
         ]
@@ -233,17 +239,19 @@ def expand(rows, rules):
         k = h(r["job_id"], 20)
         if k < 5:
             d = GENERIC_DISCLAIMER[kind][k % len(GENERIC_DISCLAIMER[kind])]
-            ex.append({**base, "version": "violating_disclaimer", "label": "위반", "rules": [rid],
+            ex.append({**base, "version": ver + "_disclaimer", "label": lab, "rules": [rid],
                        "spans": sv, "response": vc.rstrip() + "\n\n" + d})
         elif k < 8:
             art = rules["by_id"][rid]["articles"][0]
-            ex.append({**base, "version": "violating_flagged", "label": "위반", "rules": [rid],
-                       "spans": sv, "response": vc.rstrip() + f"\n\n※ 참고: 일부 표현은 {art}에 저촉될 소지가 있으니 게시 전 확인하세요."})
+            what = "이 코드는 배포 전에" if kind == "code" else "일부 표현은 게시 전에"
+            ex.append({**base, "version": ver + "_flagged", "label": lab, "rules": [rid],
+                       "spans": sv, "response": vc.rstrip() + f"\n\n※ 참고: {what} {art} 관련 사항을 확인하세요."})
         why["ok"] += 1
         out.extend(ex)
     kept = []
     for e in out:
-        reason = ("tag_leak" if TAG_LEAK.search(e["request"]) else None) or bad_text(e["request"]) or bad_text(e["response"])
+        reason = (("tag_leak" if TAG_LEAK.search(e["request"]) else None) or bad_text(e["request"])
+                  or bad_text(e["response"]) or next(iter(fix_problems(e, synthetic=True)), None))
         if reason:
             why["drop_" + reason] += 1
             continue
@@ -353,7 +361,8 @@ def main():
                     why["dedup_dropped"] += 1
                     continue
                 c = {**c, "split": m["split"]}
-            reason = ("tag_leak" if TAG_LEAK.search(c["request"]) else None) or bad_text(c["response"])
+            reason = (("tag_leak" if TAG_LEAK.search(c["request"]) else None) or bad_text(c["response"])
+                      or next(iter(fix_problems(c, synthetic=False)), None))
             if reason:
                 why["drop_" + reason] += 1
                 continue
@@ -370,6 +379,10 @@ def main():
                 if not j["rules"] or not sp:
                     why["flag_without_valid_span"] += 1
                     continue
+                if lab == "확인필요" and not any(rules["by_id"][x].get("condition") for x in j["rules"]):
+                    why["unverified_without_condition_rule"] += 1   # 조건 조항이 없는 규칙엔 확인필요가 없다
+                    continue
+                sp = [restore_span(s, c["response"]) or s for s in sp]
                 ex = {**c, "label": lab, "rules": sorted(j["rules"]), "spans": sp}
             ex["version"] = "real"
             parts[c["split"]].append(ex)
@@ -416,10 +429,10 @@ def main():
         if j is None or j.get("label") is None:
             why["judge_missing"] += 1
             continue
-        # 플래그 여부(위반·확인필요 vs 적법)가 같아야 하고, 플래그면 판정기의 규칙 집합이 의도 규칙과
-        # 같아야 한다. 위반/확인필요 구분은 생성 구조(조건 명시 위반 vs 조건 미확인)가 정한다.
-        jf, cf = j["label"] in ("위반", "확인필요"), c["label"] in ("위반", "확인필요")
-        if jf != cf:
+        # 라벨이 같아야 하고, 플래그면 판정기의 규칙 집합이 의도 규칙과 같아야 한다.
+        # (예전에는 플래그 여부만 맞춰서, 요청에 사실이 드러나 위반인 확인필요본이 남았다.)
+        cf = c["label"] in ("위반", "확인필요")
+        if j["label"] != c["label"]:
             why[f"judge_{c['label']}->{j['label']}"] += 1
             continue
         j = {**j, "rules": [x for x in j["rules"] if x in rules["by_id"]]}   # 판정기가 잘못 적은 규칙 ID 제거
