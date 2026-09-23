@@ -361,6 +361,7 @@ def main():
                 ex = {**c, "label": "적법", "rules": [], "spans": []}
             else:
                 sp = recover_spans(j.get("spans", []), c["response"])
+                j = {**j, "rules": [x for x in j["rules"] if x in rules["by_id"]]}   # 판정기가 잘못 적은 규칙 ID 제거
                 if not j["rules"] or not sp:
                     why["flag_without_valid_span"] += 1
                     continue
@@ -416,6 +417,7 @@ def main():
         if jf != cf:
             why[f"judge_{c['label']}->{j['label']}"] += 1
             continue
+        j = {**j, "rules": [x for x in j["rules"] if x in rules["by_id"]]}   # 판정기가 잘못 적은 규칙 ID 제거
         if cf and set(j["rules"]) != set(c["rules"]):
             extra = set(j["rules"]) - set(c["rules"])
             # 실제로 두 규칙이 겹치는 경우(효과 보장=전후비교+과장 등): 의도 규칙을 포함하고
