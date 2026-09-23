@@ -303,6 +303,7 @@ def main():
     ap.add_argument("--thr", type=float, default=0.35, help="char 5-gram Jaccard vs benchmark requests")
     ap.add_argument("--holdout", default="", help="comma-separated rule IDs kept out of train/val")
     ap.add_argument("--split-map", default="", help="train/dedup.py output: cluster-level split and caps")
+    ap.add_argument("--request-map", default="", help="train/rewrite_endings.py output: scenario -> rebalanced request")
     a = ap.parse_args()
     rules = load_rules()
 
@@ -341,7 +342,11 @@ def main():
                   for f in sorted(glob.glob(os.path.join(ROOT, a.judged))) for j in read_jsonl(f)}
         parts, why = defaultdict(list), Counter()
         smap = load_split_map(a.split_map)
+        rmap = load_split_map(a.request_map) or {}
         for c in cands:
+            if c["scenario"] in rmap:
+                c = {**c, "request": rmap[c["scenario"]]}
+                why["request_rewritten"] += 1
             if smap is not None:
                 m = smap.get(c["scenario"])
                 if not m or not m["keep"]:
@@ -433,6 +438,12 @@ def main():
                 continue
         keep.append(c)
     print("[finalize] kept", len(keep), "of", len(cands), dict(why))
+
+    # 문의형 끝맺음 재균형(rewrite_endings.py): 마지막 질문 문장만 바뀌므로 라벨은 그대로 쓴다
+    rmap = load_split_map(a.request_map) or {}
+    if rmap:
+        keep = [{**c, "request": rmap.get(c["scenario"], c["request"])} for c in keep]
+        why["request_rewritten"] = sum(1 for c in keep if c["scenario"] in rmap)
 
     # scenario-level split: all versions of a scenario land in the same split
     hold = set(x for x in a.holdout.split(",") if x)
