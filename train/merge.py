@@ -31,7 +31,9 @@ def main():
     ap.add_argument("--add", nargs="*", default=[])
     ap.add_argument("--frozen-test", required=True)
     ap.add_argument("--dst", required=True)
+    ap.add_argument("--holdout", default="", help="comma-separated rule IDs kept out of train/val (with their scenarios)")
     a = ap.parse_args()
+    hold = set(x for x in a.holdout.split(",") if x)
     rules = load_rules()
     cond = {r["id"] for r in rules["rules"] if r.get("condition")} - KEEP_VIOLATING
     P = lambda *x: os.path.join(ROOT, *x)
@@ -58,6 +60,12 @@ def main():
             if c["ex_id"] not in seen and c["scenario"] not in frozen_scen:
                 seen.add(c["ex_id"])
                 uniq.append(c)
+        if hold:
+            held = {c["scenario"] for c in uniq if c.get("rule") in hold or c.get("intended_rule") in hold
+                    or set(c["rules"]) & hold}
+            parts.setdefault("heldout", []).extend(c for c in uniq if c["scenario"] in held)
+            uniq = [c for c in uniq if c["scenario"] not in held]
+            stat[(sp, "moved_to_heldout")] = sum(1 for c in parts["heldout"] if c["scenario"] in held)
         random.Random(1).shuffle(uniq)
         parts[sp] = uniq
     parts["test"] = frozen
@@ -70,7 +78,7 @@ def main():
                      for c in rows])
         stat[(sp, "total")] = len(rows)
         stat[(sp, "labels")] = dict(Counter(c["label"] for c in rows))
-    json.dump({"base_synth": a.base_synth, "base_real": a.base_real, "add": a.add, "frozen_test": a.frozen_test,
+    json.dump({"holdout": sorted(hold), "base_synth": a.base_synth, "base_real": a.base_real, "add": a.add, "frozen_test": a.frozen_test,
                "stats": {f"{k[0]}:{k[1]}": v for k, v in stat.items()}},
               open(P(a.dst, "build_meta.json"), "w"), ensure_ascii=False, indent=1)
     for k, v in stat.items():
