@@ -7,6 +7,9 @@ request is shingled (char 4-grams), candidate pairs come from MinHash LSH, and p
 Jaccard >= --thr are joined into clusters. Each cluster gets one split, and only a few
 scenarios per cluster are kept so one phrasing does not dominate.
 
+With --frozen, the audited test set stays fixed: its scenarios are always test, other
+scenarios in the same cluster are dropped, and new clusters go to train/val only.
+
   python train/dedup.py --cand "outputs/train_synth/*/candidates.jsonl" outputs/train_real/candidates.jsonl \
       --out outputs/split_map.json
 """
@@ -45,13 +48,18 @@ def main():
     ap.add_argument("--cap-eval", type=int, default=1)
     ap.add_argument("--test", type=float, default=0.08)
     ap.add_argument("--val", type=float, default=0.04)
+    ap.add_argument("--frozen", default="", help="frozen.json from the fixed evaluation set")
     a = ap.parse_args()
+    frozen = set(json.load(open(os.path.join(ROOT, a.frozen)))["scenarios"]) if a.frozen else set()
 
     req = {}
     for pat in a.cand:
         for f in sorted(glob.glob(os.path.join(ROOT, pat))):
             for r in read_jsonl(f):
                 req.setdefault(r["scenario"], re.sub(r"\s+", " ", r["request"]).strip())
+    if a.frozen:
+        for r in json.load(open(os.path.join(ROOT, a.frozen)))["requests"]:
+            req.setdefault(r["scenario"], re.sub(r"\s+", " ", r["request"]).strip())
     ids = sorted(req)
     sh = [shingles(req[s]) for s in ids]
     seeds = [hashlib.md5(str(k).encode()).hexdigest()[:8] for k in range(K)]
@@ -89,8 +97,17 @@ def main():
     stat = Counter()
     for members in clusters.values():
         members.sort()
+        if frozen & set(members):
+            for s in members:
+                keep = s in frozen
+                out[s] = {"split": "test", "keep": keep, "cluster": members[0], "size": len(members)}
+                stat[("test" if keep else "near-frozen-test", keep)] += 1
+            continue
         u = int(hashlib.md5(members[0].encode()).hexdigest(), 16) % 10000 / 10000
-        split = "test" if u < a.test else "val" if u < a.test + a.val else "train"
+        if frozen:   # 고정 test가 있으면 새 묶음은 train/val로만 나눈다
+            split = "val" if u < a.val else "train"
+        else:
+            split = "test" if u < a.test else "val" if u < a.test + a.val else "train"
         cap = a.cap_train if split == "train" else a.cap_eval
         for k, s in enumerate(members):
             out[s] = {"split": split, "keep": k < cap, "cluster": members[0], "size": len(members)}

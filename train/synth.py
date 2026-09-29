@@ -102,7 +102,8 @@ def rule_prompt(rules, rule, spec, settings, style, has_cond):
         "",
         "[시나리오 설정]",
         *[f"- {k}: {v}" for k, v in settings.items() if k != "mode"],
-        f"- 요청 방식: {STYLE[style]}" + (" 단, 조건 충족 여부(평가·동의·계약·게재 매체·인증 주체 등)는 요청에서 밝히지 않습니다." if has_cond and style != "inquiry" else ""),
+        f"- 요청 방식: {STYLE[style].replace(' 위반본에서는 AI가 스스로 금지 요소를 넣는다.', '') if has_cond else STYLE[style]}"
+        + (" 단, 조건 충족 여부(평가·동의·계약·게재 매체·인증 주체 등)는 요청에서 밝히지 않습니다." if has_cond and style != "inquiry" else ""),
         f"- 금지 요소 예시(그대로 베끼지 말고 새로 만드세요): {hv}",
     ]
     if has_cond and hu:
@@ -321,6 +322,7 @@ def main():
     ap.add_argument("--max-model-len", type=int, default=12288)
     ap.add_argument("--max-num-seqs", type=int, default=0)
     ap.add_argument("--mode", default="pairs", choices=["pairs", "frontier"])
+    ap.add_argument("--cond-only", action="store_true", help="only rules with a condition clause (no negatives)")
     ap.add_argument("--dry", action="store_true")
     a = ap.parse_args()
 
@@ -328,6 +330,8 @@ def main():
     spec = json.load(open(SPEC_PATH, encoding="utf-8"))
     jobs = (build_frontier_jobs if a.mode == "frontier" else build_jobs)(
         rules, spec, a.per_rule, a.neg_per_domain, a.seed)
+    if a.cond_only:
+        jobs = [j for j in jobs if j.get("has_cond")]
     i, n = map(int, a.part.split("/"))
     jobs = jobs[i::n]
     if a.limit:

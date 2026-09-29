@@ -65,7 +65,9 @@ def run(a):
                                      request=it["user"], response=s["text"], dest=a.out_bench or a.out))
     if a.limit:
         jobs = jobs[:a.limit]
-    print(f"[guard] {len(jobs)} inputs", flush=True)
+    i, n = map(int, a.part.split("/"))
+    jobs = jobs[i::n]
+    print(f"[guard] {len(jobs)} inputs (part {a.part})", flush=True)
 
     from transformers import AutoTokenizer
     from vllm import LLM, SamplingParams
@@ -271,6 +273,7 @@ def main():
     ap.add_argument("--out-test", default="")
     ap.add_argument("--out-bench", default="")
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--part", default="0/1", help="i/n: run every n-th input starting at i (write to separate outputs)")
     ap.add_argument("--effort", default="medium")
     ap.add_argument("--judge-note", action="store_true", help="append the labeler-only caution (reference labeling)")
     ap.add_argument("--max-tokens", type=int, default=384)

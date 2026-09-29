@@ -197,7 +197,11 @@ def expand(rows, rules):
         if any(not t.get(k) for k in need):
             why["missing_tag"] += 1
             continue
-        v, u = t.get("위반본"), t.get("확인필요본")
+        if r["has_cond"] and int(r["job_id"][1:].split("-")[0]) >= 5:   # job_id = s{seed}-{i}
+            # 새 생성분: 교사가 위반본을 덧붙여도 쓰지 않는다(자백형 위반 문장 방지)
+            v, u = None, t.get("확인필요본")
+        else:
+            v, u = t.get("위반본"), t.get("확인필요본")
         if v is None:
             v, u, lab, ver = u, None, "확인필요", "unverified"
         else:
@@ -312,6 +316,7 @@ def main():
     ap.add_argument("--holdout", default="", help="comma-separated rule IDs kept out of train/val")
     ap.add_argument("--split-map", default="", help="train/dedup.py output: cluster-level split and caps")
     ap.add_argument("--request-map", default="", help="train/rewrite_endings.py output: scenario -> rebalanced request")
+    ap.add_argument("--frozen-test", default="", help="fixed evaluation set dir (synth_test.jsonl, real_test.jsonl)")
     a = ap.parse_args()
     rules = load_rules()
 
@@ -399,6 +404,11 @@ def main():
                         keep.append(c)
                 parts[sp_name] = keep
             write_jsonl(os.path.join(ROOT, a.dst, "real_heldout.jsonl"), parts["heldout"])
+        if a.frozen_test:
+            parts["test"] = read_jsonl(os.path.join(ROOT, a.frozen_test, "real_test.jsonl"))
+            ft = {c["scenario"] for c in parts["test"]}
+            for sp_name in ("train", "val"):
+                parts[sp_name] = [c for c in parts.get(sp_name, []) if c["scenario"] not in ft]
         dst = os.path.join(ROOT, a.dst)
         for sp_name in ("train", "val", "test"):
             real = parts.get(sp_name, [])
@@ -478,9 +488,15 @@ def main():
         if hold and set(c["rules"]) & hold:
             sp = "heldout"
         parts[sp].append(c)
+    if a.frozen_test:
+        # 점검을 마친 고정 test를 그대로 쓰고, 그 시나리오는 train/val에서 뺀다
+        parts["test"] = read_jsonl(os.path.join(ROOT, a.frozen_test, "synth_test.jsonl"))
+        ft = {c["scenario"] for c in parts["test"]}
+        for sp in ("train", "val", "heldout"):
+            parts[sp] = [c for c in parts.get(sp, []) if c["scenario"] not in ft]
     # a held-out rule's lawful twins go with it so the rule never appears in training
     held_scen = {c["scenario"] for c in parts.get("heldout", [])}
-    for sp in ("train", "val", "test"):
+    for sp in ("train", "val") if a.frozen_test else ("train", "val", "test"):
         moved = [c for c in parts[sp] if c["scenario"] in held_scen]
         parts[sp] = [c for c in parts[sp] if c["scenario"] not in held_scen]
         parts["heldout"] += moved
