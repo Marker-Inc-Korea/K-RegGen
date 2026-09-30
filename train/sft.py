@@ -66,6 +66,7 @@ def main():
     ap.add_argument("--bs", type=int, default=4)
     ap.add_argument("--accum", type=int, default=4)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--resume", action="store_true", help="continue from the latest checkpoint in --out")
     a = ap.parse_args()
 
     random.seed(a.seed)
@@ -97,7 +98,7 @@ def main():
         report_to="none", seed=a.seed)
     trainer = Trainer(model=model, args=args, train_dataset=train_ds, eval_dataset=val_ds,
                       data_collator=DataCollatorForSeq2Seq(tok, padding=True, label_pad_token_id=-100))
-    trainer.train()
+    trainer.train(resume_from_checkpoint=True if a.resume else None)
     trainer.save_model(a.out)
     tok.save_pretrained(a.out)
     json.dump(vars(a), open(os.path.join(a.out, "train_args.json"), "w"), indent=1)
