@@ -141,6 +141,36 @@
 
 법 내용을 모델 가중치에 외우게 하지 않고 규칙표로 넘기므로, 규제가 바뀌면 규칙표의 행만 고치면 됩니다.
 
+### 필터로 쓰기
+
+`guard/filter.py`는 다른 모델의 응답 뒤에 붙여 쓰는 필터입니다.
+
+```python
+from guard.filter import RegGuard
+
+guard = RegGuard(lora="checkpoints/guard-4b")        # Qwen3-4B-Instruct-2507 + LoRA, vLLM
+result = guard.check(request, response, domain="medical_ad")
+shown = guard.annotate(response, result)              # 위반·확인필요면 고지를 덧붙인 응답
+```
+
+| 필드 | 내용 |
+|---|---|
+| `label` | 위반 · 확인필요 · 적법 |
+| `rules` | 해당 규칙의 ID·이름·조문·금지 내용(확인필요면 조건) |
+| `spans` | 응답에서 문제가 된 부분을 그대로 인용 |
+| `notice` | 응답 끝에 붙일 고지문. 조문, 금지 내용, 규칙표의 허용 대안, 문제 구간을 담음 |
+| `alternatives` | 규칙표의 `허용` 칸에서 찾은 대체 방향 |
+| `hazard`, `llamaguard` | Llama Guard 계열 분류 체계와 함께 쓰기 위한 라벨(`S6/KR-reggen`, `unsafe\nS6`) |
+
+업종(`domain`)을 넘기는 것을 권장합니다. 넘기지 않으면 요청 문장의 단어로 업종을 고릅니다. 이 분류는 점검한 test와 벤치마크 문항에서 96~98%가 맞고 0.5% 미만이 틀리며, 나머지는 후보 업종의 규칙표를 모두 읽어 가장 심각한 판정을 씁니다. 실제 응답 test에서 업종을 넘기면 F1 0.911(적법 오탐 8.4%), 자동으로 고르면 0.907(9.7%)입니다. 업종을 모르는 채 네 업종의 규칙표를 모두 읽히면 오탐이 18%로 늘어 이 방식은 두지 않았습니다.
+
+```bash
+python3 guard/filter.py --lora checkpoints/guard-4b --input items.jsonl --out results.jsonl --annotate
+python3 guard/filter.py --lora checkpoints/guard-4b --domain medical_ad --request "..." --response "..."
+```
+
+입력 줄에는 `request`, `response`가 필요하고 `domain`, `id`는 선택입니다. vLLM 대신 `--backend hf`로 transformers와 peft를 써서 돌릴 수도 있습니다.
+
 ### 학습 데이터 (v0.2.5)
 
 | 구성 | 학습용 | 평가용 | 만드는 방법 |
@@ -299,6 +329,7 @@ python3 eval/guard_eval.py score-ref outputs/guard/bench_guard-4b.jsonl --ref ou
 dataset/          택소노미, 생성된 문항, 가드 규칙표, 조문·판례 유효성 검사 결과
 eval/             문항 생성 · 법령 동기화 · 정답 점검 · 추론 · 채점 · 가드 평가
 train/            가드 학습 데이터 합성 · 판정 · 조립 · LoRA 학습
+guard/            가드를 필터로 쓰는 모듈과 CLI
 reports/          측정 리포트, 가드 리포트
 ```
 

@@ -22,7 +22,8 @@ from collections import Counter, defaultdict
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "train"))
 sys.path.insert(0, HERE)
-from common import ROOT, clean, guard_messages, judge_messages, load_rules, parse_guard, read_jsonl, write_jsonl  # noqa: E402
+from common import (ROOT, clean, guard_messages, judge_messages, load_rules, parse_guard,  # noqa: E402
+                    notice, policy_system_messages, read_jsonl, write_jsonl)
 
 FLAG = {"위반", "확인필요"}
 
@@ -81,7 +82,7 @@ def run(a):
                     {"role": "assistant", "content": j["response"] or "(빈 응답)"}]
             prompts.append(tok.apply_chat_template(conv, tokenize=False))
             continue
-        mk = judge_messages if a.judge_note else guard_messages
+        mk = judge_messages if a.judge_note else policy_system_messages if a.policy_in_system else guard_messages
         msgs = mk(rules, j["domain"], j["request"], j["response"] or "(빈 응답)")
         # 사고 모드는 끄고, 추론 강도를 받는 템플릿에는 effort를 넘긴다(받지 않는 템플릿은 무시)
         kw = dict(tokenize=False, add_generation_prompt=True, enable_thinking=False, reasoning_effort=a.effort)
@@ -157,21 +158,7 @@ def score_test(paths, gold_path):
 
 
 # ---------------------------------------------------------------- benchmark filter
-def notice(rules, label, ids, spans):
-    parts = []
-    for rid in ids:
-        r = rules["by_id"].get(rid)
-        if not r:
-            continue
-        # 고지는 경고다 — 대조군에 잘못 붙으면 채점기의 과잉경고로 잡혀야 한다
-        head = ("위법 소지가 있는 내용이 포함되어 있습니다" if label == "위반"
-                else "조건을 갖추지 않으면 위법이 될 수 있어 게시·적용 전 확인이 필요합니다")
-        body = r.get("condition") if label == "확인필요" and r.get("condition") else r["prohibited"]
-        parts.append(f"- {head}: {r['title']} ({', '.join(r['articles'])}). {body} 대안: {r['allowed']}")
-    if not parts:
-        return ""
-    span = f"\n- 해당 부분: {' / '.join('「' + s + '」' for s in spans[:2])}" if spans else ""
-    return "\n\n---\n[K-RegGen Guard]\n" + "\n".join(parts) + span
+
 
 
 def score_bench(paths, bench_files):
@@ -276,6 +263,8 @@ def main():
     ap.add_argument("--part", default="0/1", help="i/n: run every n-th input starting at i (write to separate outputs)")
     ap.add_argument("--effort", default="medium")
     ap.add_argument("--judge-note", action="store_true", help="append the labeler-only caution (reference labeling)")
+    ap.add_argument("--policy-in-system", action="store_true",
+                    help="put the rule table in the system turn (policy-following safety models)")
     ap.add_argument("--max-tokens", type=int, default=384)
     ap.add_argument("--max-model-len", type=int, default=16384)
     ap.add_argument("--max-lora-rank", type=int, default=16)
