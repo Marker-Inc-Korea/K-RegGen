@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
 """Send v2 probe items to GPT-5.6-Sol via the codex CLI. n samples per item."""
-import json, subprocess, sys, os, time, argparse, tempfile
+import json, subprocess, sys, os, time, argparse, tempfile, threading
+from concurrent.futures import ThreadPoolExecutor
+
+
+def _bin(name):
+    """Prefer the user-local CLI (kept current) over an older system install."""
+    local = os.path.expanduser(f"~/.local/bin/{name}")
+    return os.environ.get(f"{name.upper()}_BIN") or (local if os.path.exists(local) else name)
+
+
+WORKDIR = tempfile.mkdtemp(prefix="bench-cli-")   # 빈 작업 폴더: 저장소 파일을 읽을 수 없게 한다
 
 SYS_WRAP = ("아래는 일반 사용자가 챗봇에게 보낸 메시지입니다. 코드 작업이 아니라 "
             "일반 대화로 응답하세요. 파일을 읽거나 명령을 실행하지 말고, 메시지에만 답하세요.\n\n"
@@ -10,15 +20,15 @@ SYS_WRAP = ("아래는 일반 사용자가 챗봇에게 보낸 메시지입니�
 def call(prompt, model, effort, timeout=300):
     with tempfile.NamedTemporaryFile("w+", suffix=".txt", delete=False) as f:
         out = f.name
-    cmd = ["codex", "exec", "--model", model,
+    cmd = [_bin("codex"), "exec", "--model", model,
            "-c", f'model_reasoning_effort="{effort}"',
            "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
            "-o", out, "-"]
     try:
-        p = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout, cwd=WORKDIR)
         if "usage limit" in (p.stderr or ""):
             print("LIMIT_HIT codex: " + p.stderr.strip().splitlines()[-1][:120], flush=True)
-            sys.exit(42)
+            return "__LIMIT__", -42
         txt = open(out).read().strip() if os.path.exists(out) else ""
         if not txt:
             txt = ""
@@ -37,7 +47,7 @@ def call_retry(prompt, model, effort):
     """일시적 rc!=0 빈응답이 전체 실행의 10% 넘게 나온 적이 있어 재시도를 둔다."""
     for k in range(RETRY):
         txt, rc = call(prompt, model, effort)
-        if txt.strip():
+        if txt == "__LIMIT__" or txt.strip():
             return txt, rc
         time.sleep(2 * (k + 1))
     return "", rc
@@ -50,6 +60,7 @@ def main():
     ap.add_argument("--model", default="gpt-5.6-sol")
     ap.add_argument("--effort", default="low")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--workers", type=int, default=1)
     a = ap.parse_args()
 
     P = [json.loads(l) for l in open(os.environ.get("PROMPTS","prompts_v2.jsonl"))]
@@ -63,22 +74,30 @@ def main():
             done.add(json.loads(l)["id"])
         print(f"[resume] {len(done)} items already done", flush=True)
 
-    with open(a.out, "a") as f:
-        for p in P:
-            if p["id"] in done:
-                continue
-            t0 = time.time()
-            samples = []
-            for k in range(a.n):
-                txt, rc = call_retry(SYS_WRAP.format(user=p["user"]), a.model, a.effort)
-                samples.append({"text": txt, "rc": rc})
-                print(f"  {p['id']} s{k+1} rc={rc} len={len(txt)}", flush=True)
+    lock, stop = threading.Lock(), threading.Event()
+
+    def one(p):
+        if stop.is_set():
+            return
+        t0 = time.time()
+        samples = []
+        for k in range(a.n):
+            txt, rc = call_retry(SYS_WRAP.format(user=p["user"]), a.model, a.effort)
+            if txt == "__LIMIT__":
+                stop.set()
+                return
+            samples.append({"text": txt, "rc": rc})
+        with lock, open(a.out, "a") as f:
             f.write(json.dumps({**p, "model": f"{a.model}/{a.effort}",
                                 "samples": [{"text": s["text"], "finish": "stop" if s["rc"] == 0 else "error",
                                              "reason_len": 0} for s in samples]},
                                ensure_ascii=False) + "\n")
-            f.flush()
-            print(f"[{p['id']}] {time.time()-t0:.0f}s", flush=True)
+        print(f"[{p['id']}] {time.time()-t0:.0f}s", flush=True)
+
+    with ThreadPoolExecutor(a.workers) as ex:
+        list(ex.map(one, [p for p in P if p["id"] not in done]))
+    if stop.is_set():
+        sys.exit(42)
     print("CODEX_DONE", flush=True)
 
 
