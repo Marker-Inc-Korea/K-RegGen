@@ -22,7 +22,7 @@ from collections import Counter, defaultdict
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "train"))
 sys.path.insert(0, HERE)
-from common import (ROOT, clean, guard_messages, judge_messages, load_rules, parse_guard,  # noqa: E402
+from common import (ROOT, clean, guard_messages, judge_messages, judge_messages_en, load_rules, parse_guard,  # noqa: E402
                     notice, policy_system_messages, read_jsonl, write_jsonl)
 
 FLAG = {"위반", "확인필요"}
@@ -82,10 +82,11 @@ def run(a):
                     {"role": "assistant", "content": j["response"] or "(빈 응답)"}]
             prompts.append(tok.apply_chat_template(conv, tokenize=False))
             continue
-        mk = judge_messages if a.judge_note else policy_system_messages if a.policy_in_system else guard_messages
+        mk = (judge_messages_en if a.judge_en else judge_messages if a.judge_note
+              else policy_system_messages if a.policy_in_system else guard_messages)
         msgs = mk(rules, j["domain"], j["request"], j["response"] or "(빈 응답)")
-        # 사고 모드는 끄고, 추론 강도를 받는 템플릿에는 effort를 넘긴다(받지 않는 템플릿은 무시)
-        kw = dict(tokenize=False, add_generation_prompt=True, enable_thinking=False, reasoning_effort=a.effort)
+        # 사고 모드는 기본으로 끄고(--thinking으로 켬), 추론 강도를 받는 템플릿에는 effort를 넘긴다
+        kw = dict(tokenize=False, add_generation_prompt=True, enable_thinking=a.thinking, reasoning_effort=a.effort)
         try:
             prompts.append(tok.apply_chat_template(msgs, **kw))
         except TypeError:
@@ -93,30 +94,45 @@ def run(a):
             prompts.append(tok.apply_chat_template(msgs, **kw))
     llm_kw = dict(model=a.model, tensor_parallel_size=1, gpu_memory_utilization=0.90,
                   max_model_len=a.max_model_len, trust_remote_code=True)
+    if a.max_num_seqs:
+        llm_kw["max_num_seqs"] = a.max_num_seqs   # 하이브리드 어텐션 모델은 상태 캐시 블록 수가 동시 처리 상한
     lora_req = None
     if a.lora:
         from vllm.lora.request import LoRARequest
         llm_kw.update(enable_lora=True, max_lora_rank=a.max_lora_rank)
         lora_req = LoRARequest("guard", 1, a.lora)
     llm = LLM(**llm_kw)
-    sp = SamplingParams(n=1, temperature=0.0, skip_special_tokens=False,
+    # 판정기는 사고 모드 권장 샘플링으로 여러 번 뽑아 다수결한다(--samples). 가드는 탐욕 해독 1회.
+    sp = SamplingParams(n=a.samples, temperature=a.temperature, top_p=a.top_p, top_k=a.top_k, seed=a.seed,
+                        skip_special_tokens=False,
                         max_tokens=1 if a.generic == "kanana" else 64 if a.generic else a.max_tokens)
     outs = llm.generate(prompts, sp, lora_request=lora_req)
     res = defaultdict(list)
     for j, o in zip(jobs, outs):
-        text = o.outputs[0].text
-        if "<|channel|>final<|message|>" in text:
-            text = text.split("<|channel|>final<|message|>")[-1]
-        if a.generic:
-            unsafe = ("UNSAFE" in text) if a.generic == "kanana" else bool(
-                re.search(r"Safety:\s*(Unsafe|Controversial)", text))
-            label, ids, spans = ("위반" if unsafe else "적법"), [], []
-        else:
-            text = clean(re.sub(r"<\|[a-z_]+\|>", "", text))
-            label, ids, spans = parse_guard(text)
-        res[j["dest"]].append({"key": j["key"], "guard": a.tag or os.path.basename(a.lora or a.model),
-                               "label": label, "rules": ids, "spans": spans,
-                               "finish": o.outputs[0].finish_reason, "answer": text[-400:]})
+        votes = []
+        for c in o.outputs:
+            text = c.text
+            if "<|channel|>final<|message|>" in text:
+                text = text.split("<|channel|>final<|message|>")[-1]
+            if a.generic:
+                unsafe = ("UNSAFE" in text) if a.generic == "kanana" else bool(
+                    re.search(r"Safety:\s*(Unsafe|Controversial)", text))
+                label, ids, spans = ("위반" if unsafe else "적법"), [], []
+            else:
+                text = clean(re.sub(r"<\|[a-z_]+\|>", "", text))
+                label, ids, spans = parse_guard(text)
+            votes.append(dict(label=label, rules=ids, spans=spans, finish=c.finish_reason, answer=text[-400:]))
+        # 다수결: 가장 많은 라벨(동률이면 위반 > 확인필요 > 적법), 규칙·구간은 그 라벨을 낸 첫 응답에서 가져온다
+        cnt = Counter(v["label"] for v in votes if v["label"])
+        order = {"위반": 0, "확인필요": 1, "적법": 2}
+        top = min(cnt, key=lambda l: (-cnt[l], order[l])) if cnt else None
+        pick = next((v for v in votes if v["label"] == top), votes[0])
+        row = {"key": j["key"], "guard": a.tag or os.path.basename(a.lora or a.model),
+               "label": top, "rules": pick["rules"], "spans": pick["spans"],
+               "finish": pick["finish"], "answer": pick["answer"]}
+        if a.samples > 1:
+            row["votes"] = [v["label"] for v in votes]
+        res[j["dest"]].append(row)
     for dest, rows in res.items():
         write_jsonl(dest, rows)
         print(f"[done] {dest} parsed={sum(1 for r in rows if r['label'])}/{len(rows)}", flush=True)
@@ -265,7 +281,15 @@ def main():
     ap.add_argument("--judge-note", action="store_true", help="append the labeler-only caution (reference labeling)")
     ap.add_argument("--policy-in-system", action="store_true",
                     help="put the rule table in the system turn (policy-following safety models)")
+    ap.add_argument("--judge-en", action="store_true", help="English judge prompt (common.judge_messages_en)")
+    ap.add_argument("--thinking", action="store_true", help="enable the chat template's thinking mode")
+    ap.add_argument("--samples", type=int, default=1, help="samples per input; the label is the majority vote")
+    ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--top-p", type=float, default=1.0)
+    ap.add_argument("--top-k", type=int, default=-1)
+    ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--max-tokens", type=int, default=384)
+    ap.add_argument("--max-num-seqs", type=int, default=0)
     ap.add_argument("--max-model-len", type=int, default=16384)
     ap.add_argument("--max-lora-rank", type=int, default=16)
     a = ap.parse_args()
