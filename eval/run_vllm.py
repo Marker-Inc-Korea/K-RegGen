@@ -45,6 +45,9 @@ def main():
     ap.add_argument("--gpu-util", type=float, default=0.90)
     ap.add_argument("--moe-backend", default="")
     ap.add_argument("--max-num-seqs", type=int, default=0)
+    ap.add_argument("--temperature", type=float, default=None, help="override the per-model sampling table")
+    ap.add_argument("--top-p", type=float, default=None)
+    ap.add_argument("--top-k", type=int, default=None)
     a = ap.parse_args()
 
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -81,8 +84,11 @@ def main():
     llm = LLM(**kw)
 
     def gen(prompt_list, budget, n):
-        sp = SamplingParams(n=n, max_tokens=budget, seed=20260920,
-                            **PARAMS.get(a.model, DEFAULT_PARAMS))
+        params = dict(PARAMS.get(a.model, DEFAULT_PARAMS))
+        for k, v in (("temperature", a.temperature), ("top_p", a.top_p), ("top_k", a.top_k)):
+            if v is not None:
+                params[k] = v
+        sp = SamplingParams(n=n, max_tokens=budget, seed=20260920, **params)
         return llm.generate(prompt_list, sp)
 
     outs = gen(prompts, a.max_tokens, a.n)
