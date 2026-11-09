@@ -40,9 +40,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# local agent/tool state
-.claude/
-
 # NFS keeps a deleted-but-open file as .nfsXXXX until the holder exits
 .nfs*
 
